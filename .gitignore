@@ -1,0 +1,30 @@
+# credentials
+.env
+
+# runtime data — all personal message data
+data/telegram.session
+data/telegram.session-journal
+data/*.sqlite3
+data/*.sqlite3-shm
+data/*.sqlite3-wal
+data/days/
+data/exports/
+data/style_profile.md
+data/style_profile.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+dist/
+build/
+
+# testing
+.pytest_cache/
+
+# logs
+logs/
+
+# claude code
+.claude/

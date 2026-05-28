@@ -1,0 +1,31 @@
+[project]
+name = "headless-tgclient"
+version = "0.1.0"
+description = "Personal Telegram message ingestion server with bot control"
+requires-python = ">=3.12"
+dependencies = [
+    "telethon>=1.36",
+    "python-telegram-bot>=20.0",
+    "aiosqlite>=0.20",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[project.scripts]
+tgclient = "app.main:run"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
