@@ -255,6 +255,11 @@ async def _run() -> None:
             else:
                 s = msg.sender
                 if s is None:
+                    try:
+                        s = await msg.get_sender()
+                    except Exception:
+                        pass
+                if s is None:
                     sender = "?"
                 elif hasattr(s, "first_name"):
                     sender = (s.first_name or "") or (getattr(s, "last_name", "") or "") or "?"
