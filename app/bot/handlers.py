@@ -186,8 +186,8 @@ async def cmd_backfill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Usage: /backfill N (number of days)")
         return
 
-    if days < 1 or days > 365:
-        await update.message.reply_text("Specify 1–365 days.")
+    if days < 1 or days > 10000:
+        await update.message.reply_text("Specify 1–10000 days.")
         return
 
     conn = _get_conn(context)
@@ -296,8 +296,8 @@ async def cmd_exportusershistory(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Usage: /export N (number of days)")
         return
 
-    if days < 1 or days > 365:
-        await update.message.reply_text("Specify 1–365 days.")
+    if days < 1 or days > 10000:
+        await update.message.reply_text("Specify 1–10000 days.")
         return
 
     conn = _get_conn(context)
