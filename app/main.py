@@ -162,6 +162,7 @@ def _setup_logging() -> None:
     logging.getLogger("telethon.network").setLevel(logging.WARNING)
     logging.getLogger("telethon.client.updates").setLevel(logging.WARNING)
     logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+    logging.getLogger("telegram.ext.Updater").setLevel(logging.CRITICAL)
 
 
 def _print_status(label: str, value: str, ok: bool = True) -> None:
