@@ -86,7 +86,8 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Статистика за {result['date']} ({result['timezone']})\n\n"
         f"Всего: {result['total']}\n"
         f"Входящих: {result['incoming']}\n"
-        f"Исходящих: {result['outgoing']}"
+        f"Исходящих: {result['outgoing']}\n\n"
+        f"{stats.format_source_note(result['backfilled'], result['live'])}"
     )
     await update.message.reply_text(text)
 
@@ -104,7 +105,12 @@ async def cmd_stats_by_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("No messages for this date.")
         return
 
-    lines = [f"По чатам за {context.args[0]}:\n"]
+    summary = await stats.get_daily_stats(conn, context.args[0], settings.tz)
+    lines = [
+        f"По чатам за {context.args[0]}:",
+        stats.format_source_note(summary['backfilled'], summary['live']),
+        "",
+    ]
     for r in rows[:30]:
         lines.append(f"  {r['chat_title'] or r['chat_id']}: {r['total']} (in:{r['incoming']} out:{r['outgoing']})")
     if len(rows) > 30:
