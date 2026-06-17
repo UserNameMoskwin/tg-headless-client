@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import re
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 
 import aiosqlite
 from telegram import BotCommand, ReplyKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from app.bot.guards import is_allowed
@@ -393,13 +395,16 @@ async def cmd_exportusershistory(update: Update, context: ContextTypes.DEFAULT_T
 
 # ── notification rules ──────────────────────────────────────────────
 
+# HTML, so literal <id> must be escaped to render.
 _NOTIFY_USAGE = (
-    "Уведомления по ключевым словам (форвард при срабатывании).\n\n"
+    "<b>Команды</b>\n"
     "/notify_add — добавить триггер (пошагово)\n"
-    "/notify_edit <id> — изменить триггер (пошагово)\n"
-    "/notify_on <id> · /notify_off <id> — вкл/выкл триггер\n"
-    "/notify_del <id> — удалить триггер"
+    "/notify_edit &lt;id&gt; — изменить триггер (пошагово)\n"
+    "/notify_on &lt;id&gt; · /notify_off &lt;id&gt; — вкл/выкл\n"
+    "/notify_del &lt;id&gt; — удалить триггер"
 )
+
+_DIVIDER = "─" * 18
 
 
 async def cmd_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -408,18 +413,24 @@ async def cmd_notify(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     conn = _get_conn(context)
     rules = await notifications.list_rules(conn)
     if not rules:
-        await update.message.reply_text("Триггеров нет.\n\n" + _NOTIFY_USAGE)
+        await update.message.reply_text(
+            "🔔 Триггеров нет.\n\n" + _NOTIFY_USAGE, parse_mode=ParseMode.HTML
+        )
         return
 
-    lines = [f"Уведомления ({len(rules)}):", ""]
+    lines = [f"🔔 <b>Уведомления ({len(rules)})</b>", ""]
     for r in rules:
-        state = "✅" if r["is_active"] else "⛔"
-        arch = "архив:вкл" if r["include_archived"] else "архив:выкл"
-        lines.append(f"[#{r['id']}] {state} {r['name']} · 🗄 {arch}")
-        lines.append(f"    {r['pattern']}")
-    lines.append("")
+        state = "✅ включён" if r["is_active"] else "⛔ выключен"
+        arch = "да" if r["include_archived"] else "нет"
+        name = html.escape(r["name"])
+        pattern = html.escape(r["pattern"])
+        lines.append(f"<b>#{r['id']} · {name}</b>")
+        lines.append(f"Статус: {state} · архив: {arch}")
+        lines.append(f"<code>{pattern}</code>")
+        lines.append("")
+    lines.append(_DIVIDER)
     lines.append(_NOTIFY_USAGE)
-    await update.message.reply_text("\n".join(lines))
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 def _parse_rule_id(context: ContextTypes.DEFAULT_TYPE) -> int | None:
@@ -431,12 +442,40 @@ def _parse_rule_id(context: ContextTypes.DEFAULT_TYPE) -> int | None:
         return None
 
 
+def _rule_id_for(cmd: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    """Id from `/notify_x 5` (args) or the clickable `/notify_x_5` form."""
+    rid = _parse_rule_id(context)
+    if rid is not None:
+        return rid
+    m = re.match(rf"^/{cmd}_(\d+)\b", update.message.text or "")
+    return int(m.group(1)) if m else None
+
+
+async def _list_rules_as_commands(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str, prompt: str
+) -> None:
+    """No-id fallback: list rules as clickable /<cmd>_<id> commands."""
+    conn = _get_conn(context)
+    rules = await notifications.list_rules(conn)
+    if not rules:
+        await update.message.reply_text("Триггеров нет. Добавьте через /notify_add.")
+        return
+    lines = [prompt, ""]
+    for r in rules:
+        state = "✅" if r["is_active"] else "⛔"
+        lines.append(f"{state} {r['name']}")
+        lines.append(f"   /{cmd}_{r['id']}")
+    await update.message.reply_text("\n".join(lines))
+
+
 async def cmd_notify_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed(update):
         return
-    rule_id = _parse_rule_id(context)
+    rule_id = _rule_id_for("notify_on", update, context)
     if rule_id is None:
-        await update.message.reply_text("Usage: /notify_on <id>")
+        await _list_rules_as_commands(
+            update, context, "notify_on", "Какой триггер включить?"
+        )
         return
     conn = _get_conn(context)
     if await notifications.set_active(conn, rule_id, True):
@@ -448,9 +487,11 @@ async def cmd_notify_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def cmd_notify_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed(update):
         return
-    rule_id = _parse_rule_id(context)
+    rule_id = _rule_id_for("notify_off", update, context)
     if rule_id is None:
-        await update.message.reply_text("Usage: /notify_off <id>")
+        await _list_rules_as_commands(
+            update, context, "notify_off", "Какой триггер выключить?"
+        )
         return
     conn = _get_conn(context)
     if await notifications.set_active(conn, rule_id, False):
@@ -462,9 +503,11 @@ async def cmd_notify_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def cmd_notify_del(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_allowed(update):
         return
-    rule_id = _parse_rule_id(context)
+    rule_id = _rule_id_for("notify_del", update, context)
     if rule_id is None:
-        await update.message.reply_text("Usage: /notify_del <id>")
+        await _list_rules_as_commands(
+            update, context, "notify_del", "Какой триггер удалить?"
+        )
         return
     conn = _get_conn(context)
     if await notifications.delete_rule(conn, rule_id):
@@ -518,12 +561,16 @@ async def cmd_notify_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_notify_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return ConversationHandler.END
-    rule_id = _parse_rule_id(context)
+    conn = _get_conn(context)
+
+    rule_id = _rule_id_for("notify_edit", update, context)
     if rule_id is None:
-        await update.message.reply_text("Usage: /notify_edit <id>")
+        # no id → list rules as clickable /notify_edit_<id> commands
+        await _list_rules_as_commands(
+            update, context, "notify_edit", "Выберите триггер для редактирования:"
+        )
         return ConversationHandler.END
 
-    conn = _get_conn(context)
     rule = await notifications.get_rule(conn, rule_id)
     if not rule:
         await update.message.reply_text(f"Триггер #{rule_id} не найден.")

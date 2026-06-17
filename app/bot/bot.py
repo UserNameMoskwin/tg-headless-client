@@ -55,6 +55,10 @@ def create_bot_app(
     app.add_handler(CommandHandler("notify_on", handlers.cmd_notify_on))
     app.add_handler(CommandHandler("notify_off", handlers.cmd_notify_off))
     app.add_handler(CommandHandler("notify_del", handlers.cmd_notify_del))
+    # clickable per-rule forms produced by the no-id listings: /notify_on_5 etc.
+    app.add_handler(MessageHandler(filters.Regex(r"^/notify_on_\d+\b"), handlers.cmd_notify_on))
+    app.add_handler(MessageHandler(filters.Regex(r"^/notify_off_\d+\b"), handlers.cmd_notify_off))
+    app.add_handler(MessageHandler(filters.Regex(r"^/notify_del_\d+\b"), handlers.cmd_notify_del))
 
     # /notify_add and /notify_edit drive the same sequential add/edit dialog
     text_input = filters.TEXT & ~filters.COMMAND
@@ -63,6 +67,10 @@ def create_bot_app(
             entry_points=[
                 CommandHandler("notify_add", handlers.cmd_notify_add),
                 CommandHandler("notify_edit", handlers.cmd_notify_edit),
+                # clickable per-rule form: /notify_edit_5
+                MessageHandler(
+                    filters.Regex(r"^/notify_edit_\d+\b"), handlers.cmd_notify_edit
+                ),
             ],
             states={
                 handlers.NOTIFY_NAME: [MessageHandler(text_input, handlers.notify_name)],
