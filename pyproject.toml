@@ -9,6 +9,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
+    "snowballstemmer>=2.2",
 ]
 
 [project.optional-dependencies]

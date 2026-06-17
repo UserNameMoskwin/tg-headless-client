@@ -19,11 +19,12 @@ from telethon.tl.types import (
 )
 from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo, DocumentAttributeSticker
 
-from app.bot.bot import create_bot_app
+from app.bot.bot import create_bot_app, setup_commands
 from app.config import settings
 from app.daily_log import append_message
 from app.db import get_connection, init_db
 from app.ingest import save_message
+from app.services import notifications
 from app.telegram_client import create_client, start_client
 
 log = logging.getLogger(__name__)
@@ -234,17 +235,33 @@ async def _run() -> None:
             _archived_ids.add(d.id)
         log.info("Cached %d archived chats for filtering", len(_archived_ids))
 
+    # resolved once the control bot is up; closures read them at call time
+    notify_target = None
+    bot_id = None
+
     @client.on(events.NewMessage)
     async def on_new_message(event):
         msg = event.message
         if not isinstance(msg, Message):
             return
 
-        if settings.skip_archived and msg.chat_id in _archived_ids:
-            return
+        is_archived = msg.chat_id in _archived_ids
 
         chat = await event.get_chat()
         chat_title = getattr(chat, "title", None) or getattr(chat, "first_name", None)
+
+        # keyword alerts run on every chat, regardless of archive/mute state,
+        # and independently of whether the chat is ingested
+        try:
+            await notifications.process_message(
+                client, conn, msg, chat_title, is_archived, notify_target, bot_id
+            )
+        except Exception:
+            log.exception("Notification processing failed")
+
+        if settings.skip_archived and is_archived:
+            return
+
         inserted = await save_message(conn, msg, chat_title=chat_title)
         if inserted:
             await conn.commit()
@@ -288,6 +305,20 @@ async def _run() -> None:
         await bot_app.start()
         await bot_app.updater.start_polling(drop_pending_updates=True)
         _print_status("Control bot", "polling", True)
+
+        # populate the native command menu (the "Menu" button / "/" autocomplete)
+        await setup_commands(bot_app)
+
+        # resolve the bot's own dialog so the user client can forward alerts there
+        try:
+            bot_me = await bot_app.bot.get_me()
+            bot_id = bot_me.id  # DM with the bot has this as its chat_id; skip self
+            notify_target = await client.get_input_entity(f"@{bot_me.username}")
+            rules = await notifications.get_active_rules(conn)
+            _print_status("Notifications", f"{len(rules)} active rules", True)
+        except Exception:
+            log.warning("Could not resolve bot entity; notifications disabled until restart")
+            _print_status("Notifications", "unavailable", False)
 
         print(f"\n  {C_GREEN}{C_BOLD}Ready.{C_RESET} {C_DIM}Press Ctrl+C to stop.{C_RESET}\n")
         print(f"  {C_DIM}{'─' * 50}{C_RESET}\n")

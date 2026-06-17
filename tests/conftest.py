@@ -60,6 +60,15 @@ async def db_conn(tmp_path):
         status TEXT NOT NULL DEFAULT 'completed',
         completed_at_utc TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS notification_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        include_archived INTEGER NOT NULL DEFAULT 0,
+        created_at_utc TEXT NOT NULL
+    );
     """
     await conn.executescript(schema)
     await conn.commit()
