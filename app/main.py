@@ -238,6 +238,9 @@ async def _run() -> None:
     # resolved once the control bot is up; closures read them at call time
     notify_target = None
     bot_id = None
+    notify_bot = None
+    # the bot DMs the owner (alert push)
+    owner_id = settings.allowed_telegram_user_id
 
     @client.on(events.NewMessage)
     async def on_new_message(event):
@@ -254,7 +257,8 @@ async def _run() -> None:
         # and independently of whether the chat is ingested
         try:
             await notifications.process_message(
-                client, conn, msg, chat_title, is_archived, notify_target, bot_id
+                client, conn, msg, chat_title, is_archived, notify_target, bot_id,
+                bot=notify_bot, owner_id=owner_id,
             )
         except Exception:
             log.exception("Notification processing failed")
@@ -313,6 +317,7 @@ async def _run() -> None:
         try:
             bot_me = await bot_app.bot.get_me()
             bot_id = bot_me.id  # DM with the bot has this as its chat_id; skip self
+            notify_bot = bot_app.bot  # bot sends the alert text → real push
             notify_target = await client.get_input_entity(f"@{bot_me.username}")
             rules = await notifications.get_active_rules(conn)
             _print_status("Notifications", f"{len(rules)} active rules", True)

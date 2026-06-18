@@ -198,7 +198,7 @@ async def run_backfill(
     )
     known_map = {r[0]: r[1] for r in known_rows}
 
-    allowed_ids = set(settings.allowed_telegram_user_ids)
+    allowed_id = settings.allowed_telegram_user_id
     dialogs = []
     skipped_no_user = 0
     skipped_cached = 0
@@ -233,7 +233,7 @@ async def run_backfill(
             has_user_msg = False
             async with filter_sem:
                 try:
-                    async for msg in client.iter_messages(dialog, from_user=list(allowed_ids), limit=1):
+                    async for msg in client.iter_messages(dialog, from_user=allowed_id, limit=1):
                         has_user_msg = True
                 except Exception:
                     pass

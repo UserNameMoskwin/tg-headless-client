@@ -19,11 +19,7 @@ def is_allowed(update: Update) -> bool:
         log.warning("Message with no effective_user")
         return False
 
-    if not settings.allowed_telegram_user_ids:
-        log.warning("Empty whitelist — all access denied")
-        return False
-
-    if user.id not in settings.allowed_telegram_user_ids:
+    if user.id != settings.allowed_telegram_user_id:
         log.warning("Denied access for user_id=%d (%s)", user.id, user.full_name)
         return False
 

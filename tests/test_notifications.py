@@ -179,6 +179,17 @@ class _FakeClient:
         self.forwarded.append((target, msg))
 
 
+class _FakeBot:
+    def __init__(self, *, fail: bool = False):
+        self.sent: list = []
+        self.fail = fail
+
+    async def send_message(self, *, chat_id, text):
+        if self.fail:
+            raise RuntimeError("bot delivery failed")
+        self.sent.append((chat_id, text))
+
+
 @pytest.mark.asyncio
 class TestProcessMessage:
     async def _rule(self, db_conn):
@@ -205,3 +216,31 @@ class TestProcessMessage:
         )
         assert matched == []
         assert not client.sent and not client.forwarded
+
+    async def test_bot_sends_alert_client_forwards(self, db_conn):
+        # alert text comes from the bot (→ real push); forward stays on the client
+        await self._rule(db_conn)
+        client = _FakeClient()
+        bot = _FakeBot()
+        msg = _FakeMessage(text="head of operations", chat_id=555)
+        await notifications.process_message(
+            client, db_conn, msg, "Some Chat", False,
+            target="dm", bot_id=999, bot=bot, owner_id=137,
+        )
+        assert len(bot.sent) == 1 and bot.sent[0][0] == 137  # alert via bot to owner
+        assert "Работа" in bot.sent[0][1]
+        assert client.forwarded  # original forwarded by user client
+        assert not client.sent  # client did NOT send the alert text
+
+    async def test_falls_back_to_client_when_bot_fails(self, db_conn):
+        await self._rule(db_conn)
+        client = _FakeClient()
+        bot = _FakeBot(fail=True)
+        msg = _FakeMessage(text="head of operations", chat_id=555)
+        await notifications.process_message(
+            client, db_conn, msg, "Some Chat", False,
+            target="dm", bot_id=999, bot=bot, owner_id=137,
+        )
+        # bot raised → user client delivers the alert text instead
+        assert client.sent and "Работа" in client.sent[0][1]
+        assert client.forwarded

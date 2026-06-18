@@ -21,15 +21,18 @@ class Settings(BaseSettings):
     tg_2fa_password: str | None = None
 
     control_bot_token: str
-    allowed_telegram_user_ids: list[int]
+    allowed_telegram_user_id: int
 
-    @field_validator("allowed_telegram_user_ids", mode="before")
+    @field_validator("allowed_telegram_user_id", mode="before")
     @classmethod
-    def parse_user_ids(cls, v):
+    def parse_user_id(cls, v):
         if isinstance(v, str):
-            return [int(x.strip()) for x in v.split(",") if x.strip()]
-        if isinstance(v, int):
-            return [v]
+            parts = [x.strip() for x in v.split(",") if x.strip()]
+            if len(parts) != 1:
+                raise ValueError(
+                    "ALLOWED_TELEGRAM_USER_ID must contain exactly one user id"
+                )
+            return int(parts[0])
         return v
 
     db_path: Path = _PROJECT_DIR / "data" / "telegram.sqlite3"

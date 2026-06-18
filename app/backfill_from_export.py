@@ -113,7 +113,7 @@ def _find_export_file(explicit: str | None) -> Path:
 
 async def run_import(export_path: Path, tz: ZoneInfo) -> dict:
     now_utc = datetime.now(timezone.utc).isoformat()
-    user_ids = set(settings.allowed_telegram_user_ids)
+    user_id = settings.allowed_telegram_user_id
 
     log.info("Loading %s ...", export_path)
     t0 = time.monotonic()
@@ -169,7 +169,7 @@ async def run_import(export_path: Path, tz: ZoneInfo) -> dict:
 
                 sender_id = _parse_sender_id(msg.get("from_id"))
                 sender_name = msg.get("from")
-                is_outgoing = 1 if sender_id in user_ids else 0
+                is_outgoing = 1 if sender_id == user_id else 0
 
                 text = _flatten_text(msg.get("text", ""))
                 date_utc = _msg_date_utc(msg)

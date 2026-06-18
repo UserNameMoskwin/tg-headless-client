@@ -249,12 +249,17 @@ async def process_message(
     is_archived: bool,
     target,
     bot_id: int | None = None,
+    bot=None,
+    owner_id: int | None = None,
 ) -> list[dict]:
-    """Match an incoming message against active rules and forward on a hit.
+    """Match an incoming message against active rules and alert on a hit.
 
-    Returns the list of rules that fired (empty if none). Delivery (annotation
-    + true forward) goes to `target` via the user client, so it lands in the
-    user's DM with the control bot.
+    Returns the list of rules that fired (empty if none). Delivery is split:
+    the **control bot** sends the text annotation to `owner_id` (a message FROM
+    the bot is incoming for the owner, so Telegram pushes a real notification),
+    and the **user client** forwards the original into `target` for full
+    content (the bot can't see/forward the owner's chats). If the bot isn't
+    available, we fall back to sending the annotation via the user client.
 
     Messages in the bot's own DM (`bot_id`) are skipped: that chat is where we
     deliver alerts and the control bot posts command replies, so scanning it
@@ -281,18 +286,36 @@ async def process_message(
 
     sender = _sender_name(msg)
     annotation = _build_annotation(matched, chat_title, sender)
+
+    # 1. The alert text comes from the BOT, so Telegram pushes a real
+    #    notification (a message from the bot is incoming for the owner).
+    #    Fall back to the user client if the bot can't deliver.
+    alert_sent = False
+    if bot is not None and owner_id is not None:
+        try:
+            await bot.send_message(chat_id=owner_id, text=annotation)
+            alert_sent = True
+        except Exception:
+            log.exception("Bot failed to send alert; falling back to user client")
+    if not alert_sent:
+        try:
+            await client.send_message(target, annotation)
+        except Exception:
+            log.exception("User-client alert delivery also failed")
+
+    # 2. The original message is forwarded by the USER CLIENT (the bot can't
+    #    see or forward the owner's chats).
     try:
-        await client.send_message(target, annotation)
         await client.forward_messages(target, msg)
     except Exception:
         # Restricted-content chats can block forwarding — fall back to a
-        # plain-text copy so the alert is never silently lost.
-        log.exception("Failed to forward notification; sending text fallback")
+        # plain-text copy so the content is never silently lost.
+        log.exception("Failed to forward message; sending text fallback")
         try:
             preview = text.replace("\n", " ")[:500]
             await client.send_message(target, f"(не удалось переслать)\n{preview}")
         except Exception:
-            log.exception("Notification fallback delivery also failed")
+            log.exception("Message fallback delivery also failed")
 
     log.info(
         "Notification: %s matched in %s",

@@ -19,7 +19,7 @@ app/
   main.py            — Entry point (_run). Startup, ANSI terminal UI, live handler (on_new_message),
                        notification dispatch + forward target, archived-chat cache, setup_commands() call.
   config.py          — Pydantic Settings from .env via a LAZY proxy (settings). Fields: tg_*,
-                       control_bot_token, allowed_telegram_user_ids, skip_archived, local_timezone.
+                       control_bot_token, allowed_telegram_user_id, skip_archived, local_timezone.
   db.py              — SQLite schema (4 tables) + init_db()/get_connection(). WAL mode.
   telegram_client.py — Telethon client create/start. 2FA via tg_2fa_password.
   ingest.py          — save_message() — INSERT OR IGNORE into messages. Returns inserted/duplicate.
@@ -45,7 +45,7 @@ app/
                        active-rules cache, process_message() (match → annotate → forward to bot DM).
 
 data/  (gitignored)  — telegram.sqlite3, telegram.session, days/*.jsonl, exports/*.jsonl
-tests/               — pytest + pytest-asyncio (41 tests: db, guards, stats, notifications, bot menu)
+tests/               — pytest + pytest-asyncio (43 tests: db, guards, stats, notifications, bot menu)
 ```
 
 **DB schema (4 tables):** `messages` (UNIQUE(chat_id, telegram_message_id), raw_json) · `ingest_state` (per-chat backfill status + title cache) · `backfill_days` (per-day completion) · `notification_rules` (name, pattern, is_active, include_archived).
@@ -60,8 +60,8 @@ tests/               — pytest + pytest-asyncio (41 tests: db, guards, stats, n
 
 ### Two identities (important)
 
-- **Telethon user client** = your account. Sees all dialogs, can truly *forward* messages. Drives ingestion **and** notification delivery.
-- **Control bot** (Bot API) = command surface only; it cannot read your chats or forward from them. Notifications are delivered *by the user client* into your DM with the bot.
+- **Telethon user client** = your account. Sees all dialogs, can truly *forward* messages. Drives ingestion and the **forward** half of notification delivery.
+- **Control bot** (Bot API) = command surface; it can't read your chats or forward from them, but it **can DM you**. So an alert is delivered in two parts: the **bot** sends the trigger text (a message *from* the bot, so Telegram gives you a real push notification) and the **user client** forwards the original message into the bot DM for full content.
 
 ### Gotchas (non-obvious)
 
@@ -161,7 +161,7 @@ Two clients run in one asyncio loop:
 All incoming/outgoing messages are saved in real-time. Archived chats are skipped from ingestion when `SKIP_ARCHIVED=true`. Each message is written to SQLite and appended to the daily JSONL file.
 
 ### Keyword notifications
-Per-keyword alert rules. On a match, the **user client** forwards the original message into your DM with the control bot, prefixed with which trigger(s) fired. Managed entirely from the bot.
+Per-keyword alert rules. On a match you get two messages in your DM with the control bot: the **bot** posts which trigger(s) fired (so Telegram gives you a real push notification), and the **user client** forwards the original message right after it for full content. Managed entirely from the bot.
 
 - Each rule has a name, an active/inactive flag, and a "watch archived chats" flag.
 - Runs on **every** chat regardless of archive or Telegram mute state (evaluated before the ingestion archived-skip); incoming messages only. The owner↔bot DM (where alerts and command replies are delivered) is skipped, so a delivered alert or a `/notify` listing can't re-trigger itself.
@@ -224,7 +224,7 @@ Output: `data/style_profile.md` (human-readable) + `data/style_profile.json` (ra
 
 **UI:** a persistent on-screen keyboard (📊 Статус · 💬 Диалоги · 📅 Статистика · 🔔 Уведомления · 📖 Команды) gives one-tap access to the main functions, and the native Telegram "Menu" button lists all commands (published via `setMyCommands` on startup).
 
-Bot access is restricted to `ALLOWED_TELEGRAM_USER_IDS` in private chat only.
+Bot access is restricted to the single `ALLOWED_TELEGRAM_USER_ID` in private chat only.
 
 ---
 
@@ -259,7 +259,7 @@ TG_PHONE=+your_phone_number
 TG_2FA_PASSWORD=your_2fa_password    # optional, only if 2FA is enabled
 
 CONTROL_BOT_TOKEN=your_bot_token
-ALLOWED_TELEGRAM_USER_IDS=your_telegram_user_id
+ALLOWED_TELEGRAM_USER_ID=your_telegram_user_id
 
 LOCAL_TIMEZONE=Asia/Tbilisi           # your local timezone
 SKIP_ARCHIVED=true                    # skip archived chats in live + backfill
@@ -329,7 +329,7 @@ pytest tests/ -v
 | `TG_2FA_PASSWORD` | no | `null` | Two-factor auth password |
 | `TG_SESSION` | no | `data/telegram.session` | Telethon session file path |
 | `CONTROL_BOT_TOKEN` | yes | | Telegram bot token |
-| `ALLOWED_TELEGRAM_USER_IDS` | yes | | Comma-separated user IDs |
+| `ALLOWED_TELEGRAM_USER_ID` | yes | | Single owner user ID |
 | `DB_PATH` | no | `data/telegram.sqlite3` | SQLite database path |
 | `LOCAL_TIMEZONE` | no | `Asia/Tbilisi` | Timezone for daily boundaries |
 | `SKIP_ARCHIVED` | no | `true` | Skip archived chats everywhere |

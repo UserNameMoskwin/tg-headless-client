@@ -33,18 +33,17 @@ async def export_my_messages(
 
     Returns {"file": str, "filename": str, "total": int, "days": int, "chats": int}.
     """
-    user_ids = settings.allowed_telegram_user_ids
+    user_id = settings.allowed_telegram_user_id
     start_utc, end_utc = _date_range_utc(days, tz)
 
-    # build query: outgoing messages from allowed users in date range
-    placeholders = ",".join("?" for _ in user_ids)
-    params: list = list(user_ids) + [start_utc, end_utc]
+    # build query: outgoing messages from the owner in date range
+    params: list = [user_id, start_utc, end_utc]
 
-    query = f"""
+    query = """
         SELECT telegram_message_id, chat_id, chat_title, sender_id, sender_name,
                message_date_utc, text, has_media, media_type
         FROM messages
-        WHERE sender_id IN ({placeholders})
+        WHERE sender_id = ?
           AND message_date_utc >= ?
           AND message_date_utc < ?
         ORDER BY message_date_utc

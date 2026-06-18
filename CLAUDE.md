@@ -13,7 +13,7 @@ Stack: Python 3.12+ (runs on 3.14), Telethon (MTProto), python-telegram-bot 22.x
 ```bash
 pip install -e ".[dev]"          # install (incl. pytest, pytest-asyncio)
 python -m app.main               # run the server (first run: enter Telethon login code in terminal)
-pytest -q                        # full suite (~41 tests)
+pytest -q                        # full suite (~43 tests)
 pytest tests/test_notifications.py -q          # one file
 pytest tests/test_stats.py::TestDailyStats -q  # one class
 pytest -k morphology -q          # by keyword
@@ -61,8 +61,8 @@ data/  (gitignored)  — telegram.sqlite3, telegram.session, days/*.jsonl, expor
 
 ## Two identities (matters for any "send/forward" work)
 
-- **Telethon user client** = the owner's account. Sees all dialogs, can truly *forward* messages. Drives ingestion **and** notification delivery.
-- **Control bot** (Bot API) = command surface only; it cannot read the owner's chats or forward from them. Notifications are therefore delivered *by the user client* into the owner's DM with the bot (target resolved in `main._run()`).
+- **Telethon user client** = the owner's account. Sees all dialogs, can truly *forward* messages. Drives ingestion and the **forward** half of notification delivery.
+- **Control bot** (Bot API) = command surface; it cannot read the owner's chats or forward from them, but it **can DM the owner**. Notification delivery is split: the **bot** sends the alert text to `owner_id` (a message *from* the bot is incoming for the owner, so Telegram fires a real push), and the **user client** forwards the original into the bot DM (`target`) for full content. If the bot can't deliver, the user client sends the alert text too (no push, but never lost). All four — `target`, `bot_id`, `bot`, `owner_id` — are resolved in `main._run()`.
 
 ## Gotchas (read before changing related code)
 
