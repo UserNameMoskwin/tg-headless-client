@@ -27,6 +27,8 @@ app/
                        search, history. Own session, runs next to the service.
   folders.py         — ChatWhitelist: chat ids of the CHAT_FOLDERS Telegram folder(s).
   ingest.py          — save_message() — INSERT OR IGNORE into messages.
+  backfill.py        — One-off history load (python -m app.backfill --days N), run by hand through
+                       the query session while the service keeps running.
   util.py            — full_name(), day_bounds_utc().
 
   bot/
@@ -258,6 +260,8 @@ sudo -u tgclient .venv/bin/python -m app.query history --chat valut --around 123
 ```
 
 If the login code never arrives, add `--qr` to the login command and scan the QR code in the Telegram app (Settings → Devices → Link Desktop Device); it works for the service session too. Only chats of `CHAT_FOLDERS` are visible. Search is Telegram's own (whole words and prefixes, no morphology). `--from` and `--since` are filtered client-side over at most 3000 messages per chat. The script never writes to Telegram or the DB; the session file itself is a full login, so keep it as private as `telegram.session`.
+
+**Backfill (one-off, by hand):** `sudo -u tgclient .venv/bin/python -m app.backfill --days 30 [--chat valut]` copies recent history of the folder chats into the DB through the query session. The service keeps running, duplicates are ignored (safe to repeat), no notifications are fired.
 
 **Updates:** `bash deploy/deploy.sh moskwin` (code only: `data/`, `logs/`, `.env` are never touched; reinstall; restart).
 

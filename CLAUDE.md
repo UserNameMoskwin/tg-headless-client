@@ -6,7 +6,7 @@ Guidance for Claude Code working in this repo. Keep edits minimal and match the 
 
 Personal Telegram recorder for work chats, deployed as a systemd service on the `moskwin` VPS (`/opt/tgclient`, user `tgclient`); also runs locally on Windows. A Telethon **user client** writes every new message from the whitelisted Telegram folder (`CHAT_FOLDERS=WTP` on the server) into SQLite; a separate **control bot** (python-telegram-bot) shows status and manages notification rules. One process, one asyncio loop hosting both clients. No HTTP API — by design.
 
-Scope is deliberately minimal: **record history + a rule-based notification framework.** Backfill, Telegram Desktop import, exports, the style analyzer, daily JSONL and the /stats /search /dialogs commands were removed on purpose (2026-11-18) — don't bring them back unasked. Planned next: read-only MCP access over SSH, daily summary, reminders. Keep it simple; the owner declined over-engineering.
+Scope is deliberately minimal: **record history + a rule-based notification framework.** Automatic backfill, Telegram Desktop import, exports, the style analyzer, daily JSONL and the /stats /search /dialogs commands were removed on purpose (2026-11-18) — don't bring them back unasked. Planned next: read-only MCP access over SSH, daily summary, reminders. Keep it simple; the owner declined over-engineering.
 
 Stack: Python 3.12+ (runs on 3.14), Telethon (MTProto), python-telegram-bot 22.x, aiosqlite (WAL), pydantic-settings, snowballstemmer.
 
@@ -43,6 +43,8 @@ app/
                        limited to the CHAT_FOLDERS chats; own session, runs next to the service.
   folders.py         — ChatWhitelist: chats in the CHAT_FOLDERS Telegram folder(s).
   ingest.py          — save_message() → INSERT OR IGNORE into messages.
+  backfill.py        — one-off, hand-run history load (python -m app.backfill --days N) through the
+                       query session; the service never calls it, no notifications are fired.
   util.py            — full_name(), day_bounds_utc().
   bot/
     bot.py           — create_bot_app(): registers handlers; setup_commands() (native "Menu" list).
