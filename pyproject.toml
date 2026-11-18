@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
     "snowballstemmer>=2.2",
+    "qrcode>=7.4",
 ]
 
 [project.optional-dependencies]

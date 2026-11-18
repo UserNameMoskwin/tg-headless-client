@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from telethon import TelegramClient
 
@@ -13,11 +14,12 @@ class SessionNotAuthorized(RuntimeError):
     """The saved session is missing or revoked; run `python -m app.login`."""
 
 
-def create_client() -> TelegramClient:
+def create_client(session: Path | None = None, receive_updates: bool = True) -> TelegramClient:
     return TelegramClient(
-        str(settings.tg_session),
+        str(session or settings.tg_session),
         settings.tg_api_id,
         settings.tg_api_hash,
+        receive_updates=receive_updates,
     )
 
 

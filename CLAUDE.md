@@ -37,7 +37,10 @@ app/
   config.py          — pydantic-settings from .env via a LAZY proxy `settings`.
   db.py              — SQLite schema (messages, notification_rules) + init_db()/get_connection(), WAL.
   telegram_client.py — Telethon create/start (2FA via tg_2fa_password); SessionNotAuthorized.
-  login.py           — interactive login CLI (python -m app.login), creates the session.
+  login.py           — interactive login CLI (python -m app.login), creates the session;
+                       --query logs in the separate query session (data/query.session).
+  query.py           — read-only CLI over Telegram itself (python -m app.query chats|search|history),
+                       limited to the CHAT_FOLDERS chats; own session, runs next to the service.
   folders.py         — ChatWhitelist: chats in the CHAT_FOLDERS Telegram folder(s).
   ingest.py          — save_message() → INSERT OR IGNORE into messages.
   util.py            — full_name(), day_bounds_utc().
@@ -71,6 +74,7 @@ data/  (gitignored)  — telegram.sqlite3, telegram.session.
 - **PTB lifecycle is manual** (`async with app: start(); updater.start_polling()`), so PTB's `post_init` is **never called**. Startup-only bot setup must be invoked explicitly in `main._run()` — that's how the native command menu is set (`bot.setup_commands()`). Don't add a `post_init` and expect it to run.
 - **`db.py` schema is mirrored inline in `tests/conftest.py`.** When you add/alter a table or column, update **both** or the tests drift from production.
 - **Folder whitelist gates everything.** `CHAT_FOLDERS` → `app/folders.ChatWhitelist`: `on_new_message` returns early for chats outside the folder, before notifications; chats in the folder are stored even if archived. It fails closed (folder missing → nothing processed) and refreshes on folder-update raw events + every 10 min in `main._maintenance()`. Empty `CHAT_FOLDERS` = all chats.
+- **One session file = one process.** Never open `data/telegram.session` (or a copy of it) while the service runs. For ad-hoc reads of Telegram use `app.query`, which has its own login (`data/query.session`, `python -m app.login --query`); on the server: `ssh moskwin 'cd /opt/tgclient && sudo -u tgclient .venv/bin/python -m app.query ...'`.
 - **Storage cap** (`MAX_STORAGE_MB`, `services/retention.py`) prunes whole oldest local days down to 90% of the budget, at startup and every 10 min.
 - **No interactive login without a TTY.** `start_client(interactive=False)` raises `SessionNotAuthorized`; `main` alerts the owner via the bot and exits 78 (systemd `RestartPreventExitStatus=78`). Login is `python -m app.login`.
 - **Notifications run *before* the archived-skip** in `on_new_message` (but after the folder check), so alerts cover every whitelisted chat regardless of archive/mute state. `SKIP_ARCHIVED` only applies when `CHAT_FOLDERS` is empty. Keep that ordering.

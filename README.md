@@ -21,7 +21,10 @@ app/
   config.py          — Pydantic Settings from .env via a LAZY proxy (settings).
   db.py              — SQLite schema (messages, notification_rules) + init_db()/get_connection(). WAL.
   telegram_client.py — Telethon create/start; SessionNotAuthorized when no TTY and no valid session.
-  login.py           — Interactive login CLI (python -m app.login) → data/telegram.session.
+  login.py           — Interactive login CLI (python -m app.login) → data/telegram.session;
+                       --query logs in the separate query session.
+  query.py           — Read-only CLI over Telegram itself (python -m app.query): folder chats,
+                       search, history. Own session, runs next to the service.
   folders.py         — ChatWhitelist: chat ids of the CHAT_FOLDERS Telegram folder(s).
   ingest.py          — save_message() — INSERT OR IGNORE into messages.
   util.py            — full_name(), day_bounds_utc().
@@ -182,6 +185,7 @@ pytest -q
 |---|---|---|
 | `data/telegram.sqlite3` | Messages + notification rules | SQLite WAL, INSERT OR IGNORE |
 | `data/telegram.session` | Telethon auth session | Managed by Telethon |
+| `data/query.session` | Second login, used only by `app.query` | Managed by Telethon |
 
 ---
 
@@ -194,6 +198,7 @@ pytest -q
 | `TG_PHONE` | yes | | Phone number for auth |
 | `TG_2FA_PASSWORD` | no | `null` | Two-factor auth password |
 | `TG_SESSION` | no | `data/telegram.session` | Telethon session file path |
+| `TG_QUERY_SESSION` | no | `data/query.session` | Session file of the separate login used by `app.query` |
 | `CONTROL_BOT_TOKEN` | yes | | Telegram bot token |
 | `ALLOWED_TELEGRAM_USER_ID` | yes | | Single owner user ID |
 | `DB_PATH` | no | `data/telegram.sqlite3` | SQLite database path |
@@ -240,6 +245,19 @@ tr -d '\r' < /opt/tgclient/deploy/tgclient.service > /etc/systemd/system/tgclien
 systemctl daemon-reload && systemctl enable --now tgclient
 journalctl -u tgclient -f
 ```
+
+**Querying Telegram directly (no service stop, not the DB):** `app.query` reads the folder chats straight from Telegram through its own login, so it can run while the service is up. Log in once, then query:
+
+```bash
+cd /opt/tgclient && sudo -u tgclient .venv/bin/python -m app.login --query
+sudo -u tgclient .venv/bin/python -m app.query chats
+sudo -u tgclient .venv/bin/python -m app.query search "договор" --since 2026-11-01 --limit 10
+sudo -u tgclient .venv/bin/python -m app.query search "AML" --count
+sudo -u tgclient .venv/bin/python -m app.query history --chat valut --limit 30
+sudo -u tgclient .venv/bin/python -m app.query history --chat valut --around 12345
+```
+
+If the login code never arrives, add `--qr` to the login command and scan the QR code in the Telegram app (Settings → Devices → Link Desktop Device); it works for the service session too. Only chats of `CHAT_FOLDERS` are visible. Search is Telegram's own (whole words and prefixes, no morphology). `--from` and `--since` are filtered client-side over at most 3000 messages per chat. The script never writes to Telegram or the DB; the session file itself is a full login, so keep it as private as `telegram.session`.
 
 **Updates:** `bash deploy/deploy.sh moskwin` (code only: `data/`, `logs/`, `.env` are never touched; reinstall; restart).
 

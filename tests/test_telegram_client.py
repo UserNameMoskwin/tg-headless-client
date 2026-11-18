@@ -56,3 +56,13 @@ async def test_interactive_uses_login_flow():
     client = _FakeClient(authorized=False)
     assert await start_client(client, interactive=True) == 42
     assert client.started
+
+
+def test_login_code_channel_names_the_delivery_place():
+    from telethon.tl.types.auth import SentCodeTypeApp, SentCodeTypeSms
+
+    from app.login import code_channel
+
+    assert "Telegram app" in code_channel(SimpleNamespace(type=SentCodeTypeApp(length=5)))
+    assert code_channel(SimpleNamespace(type=SentCodeTypeSms(length=5))) == "SMS"
+    assert code_channel(SimpleNamespace(type=object())) == "object"

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     tg_phone: str
     tg_session: Path = _PROJECT_DIR / "data" / "telegram.session"
 
+    # Separate login used by `python -m app.query`, so ad-hoc queries can run
+    # while the service holds tg_session.
+    tg_query_session: Path = _PROJECT_DIR / "data" / "query.session"
+
     tg_2fa_password: str | None = None
 
     control_bot_token: str
