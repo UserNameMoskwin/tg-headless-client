@@ -9,6 +9,8 @@ import snowballstemmer
 from telethon import TelegramClient
 from telethon.tl.types import Channel, Chat, Message
 
+from app.util import full_name
+
 log = logging.getLogger(__name__)
 
 
@@ -227,9 +229,7 @@ def _sender_name(msg: Message) -> str:
     s = msg.sender
     if s is None or isinstance(s, (Channel, Chat)):
         return getattr(s, "title", None) or "?"
-    first = getattr(s, "first_name", "") or ""
-    last = getattr(s, "last_name", "") or ""
-    return f"{first} {last}".strip() or "?"
+    return full_name(s) or "?"
 
 
 def _build_annotation(matched: list[dict], chat_title: str | None, sender: str) -> str:

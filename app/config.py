@@ -40,15 +40,32 @@ class Settings(BaseSettings):
 
     skip_archived: bool = True
 
+    # Comma-separated Telegram folder names (e.g. "WTP"). When set, only chats
+    # in these folders are stored and scanned for notifications. Empty = every chat.
+    chat_folders: str = ""
+
+    # Storage budget for the DB, in MB. Over budget, the oldest local days are
+    # pruned. 0 = unlimited.
+    max_storage_mb: int = 0
+
     log_level: str = "INFO"
+    # Log file, relative to the project dir. Empty = stdout only (systemd/journald).
+    log_file: str = "logs/tgclient.log"
 
     @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.local_timezone)
 
+    @property
+    def chat_folder_names(self) -> list[str]:
+        return [x.strip() for x in self.chat_folders.split(",") if x.strip()]
 
-def get_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]
+    @property
+    def log_path(self) -> Path | None:
+        if not self.log_file.strip():
+            return None
+        path = Path(self.log_file)
+        return path if path.is_absolute() else _PROJECT_DIR / path
 
 
 class _LazySettings:
@@ -58,7 +75,7 @@ class _LazySettings:
 
     def _load(self) -> Settings:
         if self._instance is None:
-            self._instance = get_settings()
+            self._instance = Settings()  # type: ignore[call-arg]
         return self._instance
 
     def __getattr__(self, name: str):

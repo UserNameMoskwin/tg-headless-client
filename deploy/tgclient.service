@@ -1,0 +1,40 @@
+# /etc/systemd/system/tgclient.service
+[Unit]
+Description=headless-tgclient: Telegram ingestion (folder whitelist) + control bot
+After=network-online.target
+Wants=network-online.target
+# Stop retrying after 5 crashes in 10 minutes instead of looping forever.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=tgclient
+Group=tgclient
+WorkingDirectory=/opt/tgclient
+ExecStart=/opt/tgclient/.venv/bin/python -m app.main
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+Environment=NO_COLOR=1
+Restart=on-failure
+RestartSec=10
+# 78 = Telegram session not authorized: wait for a manual `python -m app.login`
+# instead of restarting (each restart would be another failed login).
+RestartPreventExitStatus=78
+TimeoutStopSec=30
+
+# Hardening: code is read-only, only data/ and logs/ are writable.
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/opt/tgclient/data /opt/tgclient/logs
+
+[Install]
+WantedBy=multi-user.target

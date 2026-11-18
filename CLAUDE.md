@@ -4,7 +4,9 @@ Guidance for Claude Code working in this repo. Keep edits minimal and match the 
 
 ## What this is
 
-Personal, local Telegram ingestion server (Windows-only). A Telethon **user client** reads every message into SQLite + daily JSONL; a separate **control bot** (python-telegram-bot) exposes commands. One process, one asyncio loop hosting both clients. No HTTP API — by design. Keep it simple; the owner explicitly declined an HTTP layer and over-engineering.
+Personal Telegram recorder for work chats, deployed as a systemd service on the `moskwin` VPS (`/opt/tgclient`, user `tgclient`); also runs locally on Windows. A Telethon **user client** writes every new message from the whitelisted Telegram folder (`CHAT_FOLDERS=WTP` on the server) into SQLite; a separate **control bot** (python-telegram-bot) shows status and manages notification rules. One process, one asyncio loop hosting both clients. No HTTP API — by design.
+
+Scope is deliberately minimal: **record history + a rule-based notification framework.** Backfill, Telegram Desktop import, exports, the style analyzer, daily JSONL and the /stats /search /dialogs commands were removed on purpose (2026-11-18) — don't bring them back unasked. Planned next: read-only MCP access over SSH, daily summary, reminders. Keep it simple; the owner declined over-engineering.
 
 Stack: Python 3.12+ (runs on 3.14), Telethon (MTProto), python-telegram-bot 22.x, aiosqlite (WAL), pydantic-settings, snowballstemmer.
 
@@ -12,19 +14,19 @@ Stack: Python 3.12+ (runs on 3.14), Telethon (MTProto), python-telegram-bot 22.x
 
 ```bash
 pip install -e ".[dev]"          # install (incl. pytest, pytest-asyncio)
-python -m app.main               # run the server (first run: enter Telethon login code in terminal)
-pytest -q                        # full suite (~43 tests)
+python -m app.main               # run the server (in a terminal: asks for the login code on first run)
+python -m app.login              # interactive login → data/telegram.session
+pytest -q                        # full suite (~52 tests)
 pytest tests/test_notifications.py -q          # one file
-pytest tests/test_stats.py::TestDailyStats -q  # one class
 pytest -k morphology -q          # by keyword
 
-python -m app.backfill_from_export [result.json]   # import Telegram Desktop export
-python -m app.style_analyzer                        # build writing-style profile
+bash deploy/deploy.sh moskwin    # push code to the server + restart (never touches data/ or .env)
 ```
 
 Notes:
 - The shell is PowerShell; the Bash tool is also available. When piping Cyrillic into `python`, the PowerShell pipe corrupts UTF-8 — set `$env:PYTHONIOENCODING="utf-8"` and prefer running a file over `python -c` for non-ASCII.
 - `python -m app.main` needs real Telegram credentials in `.env` and network; it can't be run headlessly here. Rely on `pytest` for verification.
+- Don't run the local copy while the server service is up: the same bot token polled from two places conflicts. Server logs: `ssh moskwin journalctl -u tgclient`.
 
 ## Layout
 
@@ -33,21 +35,21 @@ app/
   main.py            — Entry point (_run): startup, terminal UI, on_new_message live handler,
                        notification dispatch, archived-chat cache, setup_commands() call, shutdown.
   config.py          — pydantic-settings from .env via a LAZY proxy `settings`.
-  db.py              — SQLite schema (4 tables) + init_db()/get_connection(), WAL.
-  telegram_client.py — Telethon create/start (2FA via tg_2fa_password).
+  db.py              — SQLite schema (messages, notification_rules) + init_db()/get_connection(), WAL.
+  telegram_client.py — Telethon create/start (2FA via tg_2fa_password); SessionNotAuthorized.
+  login.py           — interactive login CLI (python -m app.login), creates the session.
+  folders.py         — ChatWhitelist: chats in the CHAT_FOLDERS Telegram folder(s).
   ingest.py          — save_message() → INSERT OR IGNORE into messages.
-  backfill.py        — run_backfill(): concurrent dialog scan, day-level tracking, participation filter.
-  daily_log.py       — JSONL daily files; append_message(), rebuild_day_from_db().
-  export.py          — export_my_messages() → data/exports/*.jsonl.
-  backfill_from_export.py / style_analyzer.py — standalone CLIs.
+  util.py            — full_name(), day_bounds_utc().
   bot/
     bot.py           — create_bot_app(): registers handlers; setup_commands() (native "Menu" list).
-    handlers.py      — all commands, MAIN_KEYBOARD, COMMANDS, /help, on_button router,
+    handlers.py      — /start, /help, /status, MAIN_KEYBOARD, COMMANDS, on_button router,
                        /notify* (incl. the add/edit ConversationHandler steps).
     guards.py        — is_allowed(): private chat + user_id whitelist.
-  services/          — conn-in, dicts-out logic (unit-tested): stats, messages, jobs, notifications.
+  services/          — conn-in, dicts-out logic (unit-tested): jobs, notifications, retention (storage cap).
+deploy/              — systemd unit + deploy.sh (tar over ssh, rsync into /opt/tgclient, restart).
 tests/               — pytest + pytest-asyncio.
-data/  (gitignored)  — telegram.sqlite3, telegram.session, days/*.jsonl, exports/*.jsonl.
+data/  (gitignored)  — telegram.sqlite3, telegram.session.
 ```
 
 ## Conventions
@@ -68,9 +70,12 @@ data/  (gitignored)  — telegram.sqlite3, telegram.session, days/*.jsonl, expor
 
 - **PTB lifecycle is manual** (`async with app: start(); updater.start_polling()`), so PTB's `post_init` is **never called**. Startup-only bot setup must be invoked explicitly in `main._run()` — that's how the native command menu is set (`bot.setup_commands()`). Don't add a `post_init` and expect it to run.
 - **`db.py` schema is mirrored inline in `tests/conftest.py`.** When you add/alter a table or column, update **both** or the tests drift from production.
-- **Notifications run *before* the archived-skip** in `on_new_message`, so keyword alerts cover every chat regardless of archive/Telegram-mute state; ingestion may still skip archived chats when `SKIP_ARCHIVED=true`. Keep that ordering.
+- **Folder whitelist gates everything.** `CHAT_FOLDERS` → `app/folders.ChatWhitelist`: `on_new_message` returns early for chats outside the folder, before notifications; chats in the folder are stored even if archived. It fails closed (folder missing → nothing processed) and refreshes on folder-update raw events + every 10 min in `main._maintenance()`. Empty `CHAT_FOLDERS` = all chats.
+- **Storage cap** (`MAX_STORAGE_MB`, `services/retention.py`) prunes whole oldest local days down to 90% of the budget, at startup and every 10 min.
+- **No interactive login without a TTY.** `start_client(interactive=False)` raises `SessionNotAuthorized`; `main` alerts the owner via the bot and exits 78 (systemd `RestartPreventExitStatus=78`). Login is `python -m app.login`.
+- **Notifications run *before* the archived-skip** in `on_new_message` (but after the folder check), so alerts cover every whitelisted chat regardless of archive/mute state. `SKIP_ARCHIVED` only applies when `CHAT_FOLDERS` is empty. Keep that ordering.
 - **Notifications skip the bot's own DM.** Alerts and the control bot's command replies (e.g. a `/notify` listing) land in the owner↔bot DM; that chat's `chat_id` equals the bot's user id. `process_message(..., bot_id=...)` drops messages from it so a delivered alert (or a rule listing) can't re-trigger itself. `bot_id` is resolved next to `notify_target` in `main._run()`.
-- **Keyword matching is morphological, not substring**: keywords and text are stemmed per word (snowballstemmer RU/EN, `ё`→`е` normalized) and compared as token stems — `сделать` fires on `сделаем/сделаю/…`, but `кот` does *not* match `который`. Active rules are cached in `notifications._active_cache`; **every rule mutation must call `invalidate_cache()`**.
+- **Keyword matching is morphological, not substring**: keywords and text are stemmed per word (snowballstemmer RU/EN, `ё`→`е` normalized) and compared as token stems — `сделать` fires on `сделаем/сделаю/…`, but `кот` does *not* match `который`. Active rules are cached in `notifications._active_cache`; **every rule mutation must call `invalidate_cache()`** (a rule written straight into the DB needs a service restart).
 - **Reply keyboard ≠ command menu.** The persistent on-screen keyboard is a `ReplyKeyboardMarkup` attached per message (`handlers.MAIN_KEYBOARD`); the "Menu" button list is `setMyCommands` (`handlers.COMMANDS`). Both are wired in `bot/bot.py`. Adding a command usually means: handler in `handlers.py` → register in `bot.py` → add to `COMMANDS` (and a button only if it takes no args).
 - **`/notify_add` and `/notify_edit` are a `ConversationHandler`** (registered in `bot.py`), not plain command handlers. The flow is name → keywords → archived (inline) → active (inline), state in `context.user_data["notify_draft"]`; both share the same steps and the `edit_id` field selects add vs. edit (edit pre-loads the rule and lets `-` keep a value). Step functions return the next `NOTIFY_*` state; the inline buttons use `callback_data` prefixes `notify_arch:`/`notify_active:` that the `CallbackQueryHandler` patterns must keep matching. `/cancel` is the fallback. The edit save path calls `notifications.update_rule()` (overwrites all fields at once); the add path uses `add_rule` + `set_active`/`set_archived`.
 

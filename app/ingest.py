@@ -7,15 +7,10 @@ from datetime import datetime, timezone
 import aiosqlite
 from telethon.tl.types import Channel, Chat, Message
 
-log = logging.getLogger(__name__)
+from app.db import INSERT_MESSAGE
+from app.util import full_name
 
-_INSERT_MESSAGE = """
-INSERT OR IGNORE INTO messages
-    (telegram_message_id, chat_id, chat_title, sender_id, sender_name,
-     is_outgoing, message_date_utc, text, has_media, media_type,
-     raw_json, inserted_at_utc)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-"""
+log = logging.getLogger(__name__)
 
 
 def _media_type(msg: Message) -> str | None:
@@ -26,13 +21,9 @@ def _media_type(msg: Message) -> str | None:
 
 def _sender_name(msg: Message) -> str | None:
     s = msg.sender
-    if s is None:
+    if s is None or isinstance(s, (Channel, Chat)):
         return None
-    if isinstance(s, (Channel, Chat)):
-        return None
-    first = getattr(s, "first_name", "") or ""
-    last = getattr(s, "last_name", "") or ""
-    return f"{first} {last}".strip() or None
+    return full_name(s)
 
 
 def _raw_json(msg: Message) -> str:
@@ -59,7 +50,7 @@ async def save_message(
 
     try:
         cursor = await conn.execute(
-            _INSERT_MESSAGE,
+            INSERT_MESSAGE,
             (
                 msg.id,
                 chat_id,

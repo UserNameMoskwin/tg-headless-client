@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 import os
 import signal
 import sys
-from pathlib import Path
 
 from telethon import events
 from telethon.tl.types import (
@@ -18,18 +18,33 @@ from telethon.tl.types import (
     MessageMediaWebPage,
 )
 from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo, DocumentAttributeSticker
+from telethon.tl.types import UpdateDialogFilter, UpdateDialogFilterOrder, UpdateDialogFilters
 
 from app.bot.bot import create_bot_app, setup_commands
 from app.config import settings
-from app.daily_log import append_message
 from app.db import get_connection, init_db
+from app.folders import ChatWhitelist
 from app.ingest import save_message
-from app.services import notifications
-from app.telegram_client import create_client, start_client
+from app.services import notifications, retention
+from app.telegram_client import SessionNotAuthorized, create_client, start_client
 
 log = logging.getLogger(__name__)
 
-# ANSI colors
+# systemd: don't ask for a code, exit with this status (unit sets
+# RestartPreventExitStatus) and wait for a manual `python -m app.login`.
+EXIT_NOT_AUTHORIZED = 78
+# folder refresh + storage limit check
+MAINTENANCE_INTERVAL = 600
+
+LOGIN_HINT = (
+    "Сессия Telegram недействительна, сервер остановлен.\n"
+    "Войдите заново по SSH: python -m app.login (от пользователя сервиса), "
+    "затем перезапустите сервис."
+)
+
+# ANSI colors — only on an interactive terminal (not under systemd/journald)
+_USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
 C_RESET = "\033[0m"
 C_DIM = "\033[2m"
 C_BOLD = "\033[1m"
@@ -38,8 +53,9 @@ C_YELLOW = "\033[33m"
 C_RED = "\033[31m"
 C_CYAN = "\033[36m"
 C_MAGENTA = "\033[35m"
-C_BLUE = "\033[34m"
 C_WHITE = "\033[97m"
+if not _USE_COLOR:
+    C_RESET = C_DIM = C_BOLD = C_GREEN = C_YELLOW = C_RED = C_CYAN = C_MAGENTA = C_WHITE = ""
 
 def _format_duration(seconds: int | float) -> str:
     seconds = int(seconds)
@@ -143,20 +159,24 @@ class _ColorFormatter(logging.Formatter):
 
 
 def _setup_logging() -> None:
-    log_dir = Path(__file__).resolve().parent.parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(_ColorFormatter())
+    handlers: list[logging.Handler] = [console]
 
-    file_handler = logging.FileHandler(log_dir / "tgclient.log", encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    ))
+    log_path = settings.log_path
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=10 * 2**20, backupCount=3, encoding="utf-8",
+        )
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        ))
+        handlers.append(file_handler)
 
-    logging.basicConfig(level=level, handlers=[console, file_handler])
+    logging.basicConfig(level=level, handlers=handlers)
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
@@ -171,8 +191,25 @@ def _print_status(label: str, value: str, ok: bool = True) -> None:
     print(f"  {C_DIM}{'':>8}{C_RESET}  {C_WHITE}{label:<22}{C_RESET} {value} [{check}]")
 
 
+async def _alert_owner(text: str) -> None:
+    """DM the owner via the control bot (works without the user client)."""
+    try:
+        from telegram import Bot
+
+        async with Bot(settings.control_bot_token) as bot:
+            await bot.send_message(chat_id=settings.allowed_telegram_user_id, text=text)
+    except Exception:
+        log.warning("Could not alert the owner via the control bot", exc_info=True)
+
+
+async def _enforce_storage(conn) -> None:
+    if settings.max_storage_mb > 0:
+        await retention.enforce_storage_limit(conn, settings.max_storage_mb * 2**20, settings.tz)
+
+
 async def _run() -> None:
-    os.system("")  # enable ANSI on Windows
+    if sys.platform == "win32":
+        os.system("")  # enable ANSI escape codes in the Windows console
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -182,51 +219,40 @@ async def _run() -> None:
     await init_db()
     conn = await get_connection()
     _print_status("Database", str(settings.db_path.name), True)
+    await _enforce_storage(conn)
 
     client = create_client()
-    me_id = await start_client(client)
+    interactive = sys.stdin is not None and sys.stdin.isatty()
+    try:
+        me_id = await start_client(client, interactive=interactive)
+    except SessionNotAuthorized:
+        log.error("Telegram session is not authorized. Run: python -m app.login")
+        await _alert_owner(LOGIN_HINT)
+        await conn.close()
+        raise SystemExit(EXIT_NOT_AUTHORIZED)
     me = await client.get_me()
     _print_status("Telegram client", f"{me.first_name} (id={me_id})", True)
 
     msg_count = await conn.execute_fetchall("SELECT COUNT(*) FROM messages")
     _print_status("Messages indexed", str(msg_count[0][0]), True)
 
-    # fix missing chat titles from dialog cache
-    empty_rows = await conn.execute_fetchall(
-        "SELECT chat_id FROM ingest_state WHERE chat_title IS NULL OR length(chat_title) = 0"
-    )
-    if empty_rows:
-        empty_ids = {row[0] for row in empty_rows}
-        fixed = 0
-        async for d in client.iter_dialogs():
-            if d.id in empty_ids:
-                entity = d.entity
-                first = getattr(entity, "first_name", "") or ""
-                last = getattr(entity, "last_name", "") or ""
-                title = d.title or d.name or f"{first} {last}".strip()
-                if title:
-                    await conn.execute(
-                        "UPDATE ingest_state SET chat_title = ? WHERE chat_id = ?",
-                        (title, d.id),
-                    )
-                    await conn.execute(
-                        "UPDATE messages SET chat_title = ? WHERE chat_id = ? AND (chat_title IS NULL OR length(chat_title) = 0)",
-                        (title, d.id),
-                    )
-                    fixed += 1
-                    empty_ids.discard(d.id)
-                if not empty_ids:
-                    break
-        # remaining unfixable entries — mark with ID so we don't retry
-        unfixable = len(empty_ids)
-        for cid in empty_ids:
-            await conn.execute(
-                "UPDATE ingest_state SET chat_title = ? WHERE chat_id = ?",
-                (f"#{cid}", cid),
-            )
-        if fixed or unfixable:
-            await conn.commit()
-            log.info("Chat titles: %d fixed from dialogs, %d marked as #ID (not found)", fixed, unfixable)
+    # chat whitelist by Telegram folder (CHAT_FOLDERS); fails closed
+    whitelist = ChatWhitelist(settings.chat_folder_names)
+    if whitelist.enabled:
+        try:
+            await whitelist.refresh(client)
+        except Exception:
+            log.exception("Could not load Telegram folders; no chats processed until next refresh")
+    _print_status("Chats", whitelist.describe(), not whitelist.enabled or bool(whitelist.chat_ids))
+
+    @client.on(events.Raw(types=(
+        UpdateDialogFilter, UpdateDialogFilters, UpdateDialogFilterOrder,
+    )))
+    async def on_folders_changed(update):
+        try:
+            await whitelist.refresh(client)
+        except Exception:
+            log.exception("Folder refresh failed")
 
     # cache archived chat IDs at startup for filtering
     _archived_ids: set[int] = set()
@@ -247,6 +273,9 @@ async def _run() -> None:
         msg = event.message
         if not isinstance(msg, Message):
             return
+        # outside the configured folder(s): don't store, don't notify
+        if not whitelist.allows(msg.chat_id):
+            return
 
         is_archived = msg.chat_id in _archived_ids
 
@@ -263,13 +292,13 @@ async def _run() -> None:
         except Exception:
             log.exception("Notification processing failed")
 
-        if settings.skip_archived and is_archived:
+        # a chat explicitly in the folder is ingested even when archived
+        if settings.skip_archived and is_archived and not whitelist.enabled:
             return
 
         inserted = await save_message(conn, msg, chat_title=chat_title)
         if inserted:
             await conn.commit()
-            append_message(msg, chat_title, settings.tz)
             preview = _format_message_preview(msg)
             if msg.out:
                 log.info("%s%s>>>%s %s: %s", C_CYAN, C_BOLD, C_RESET, chat_title or "?", preview)
@@ -290,7 +319,21 @@ async def _run() -> None:
 
     _print_status("Live ingestion", "listening", True)
 
-    bot_app = create_bot_app(client, conn)
+    bot_app = create_bot_app(client, conn, whitelist)
+
+    async def _maintenance() -> None:
+        while True:
+            await asyncio.sleep(MAINTENANCE_INTERVAL)
+            try:
+                await whitelist.refresh(client)
+            except Exception:
+                log.exception("Folder refresh failed")
+            try:
+                await _enforce_storage(conn)
+            except Exception:
+                log.exception("Storage limit check failed")
+
+    maintenance_task = asyncio.create_task(_maintenance())
 
     shutdown_event = asyncio.Event()
 
@@ -335,6 +378,7 @@ async def _run() -> None:
 
         print(f"\n  {C_DIM}{'─' * 50}{C_RESET}")
         log.info("Shutting down...")
+        maintenance_task.cancel()
         await bot_app.updater.stop()
         await bot_app.stop()
 

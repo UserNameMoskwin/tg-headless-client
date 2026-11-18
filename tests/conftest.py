@@ -41,25 +41,8 @@ async def db_conn(tmp_path):
     );
     CREATE INDEX IF NOT EXISTS idx_messages_date_utc ON messages(message_date_utc);
     CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON messages(chat_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
     CREATE INDEX IF NOT EXISTS idx_messages_is_outgoing ON messages(is_outgoing);
-
-    CREATE TABLE IF NOT EXISTS ingest_state (
-        chat_id INTEGER PRIMARY KEY,
-        chat_title TEXT,
-        chat_type TEXT,
-        last_backfilled_message_id INTEGER,
-        last_seen_message_id INTEGER,
-        backfill_status TEXT NOT NULL DEFAULT 'pending',
-        last_error TEXT,
-        updated_at_utc TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS backfill_days (
-        date_local TEXT PRIMARY KEY,
-        messages_saved INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'completed',
-        completed_at_utc TEXT NOT NULL
-    );
 
     CREATE TABLE IF NOT EXISTS notification_rules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
