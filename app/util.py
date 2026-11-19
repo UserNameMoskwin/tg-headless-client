@@ -13,6 +13,13 @@ def full_name(entity) -> str | None:
     return f"{first} {last}".strip() or None
 
 
+def local_time(iso_utc: str | None, tz: ZoneInfo) -> str:
+    """A stored UTC ISO timestamp as local 'YYYY-MM-DD HH:MM' for display."""
+    if not iso_utc:
+        return "—"
+    return datetime.fromisoformat(iso_utc).astimezone(tz).strftime("%Y-%m-%d %H:%M")
+
+
 def day_bounds_utc(date_str: str, tz: ZoneInfo) -> tuple[str, str]:
     """UTC ISO [start, end) covering one local calendar day (YYYY-MM-DD)."""
     day = datetime.strptime(date_str, "%Y-%m-%d").date()

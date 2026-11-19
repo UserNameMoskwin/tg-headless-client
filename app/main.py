@@ -6,6 +6,7 @@ import logging.handlers
 import os
 import signal
 import sys
+from datetime import datetime
 
 from telethon import events
 from telethon.tl.types import (
@@ -160,6 +161,12 @@ class _ColorFormatter(logging.Formatter):
 
 def _setup_logging() -> None:
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
+
+    # Log timestamps in settings.tz, whatever the host's own timezone is.
+    tz = settings.tz
+    logging.Formatter.converter = staticmethod(
+        lambda ts: datetime.fromtimestamp(ts, tz).timetuple()
+    )
 
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(_ColorFormatter())

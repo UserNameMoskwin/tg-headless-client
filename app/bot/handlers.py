@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from app.bot.guards import is_allowed
 from app.config import settings
 from app.services import jobs, notifications, retention
+from app.util import local_time
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Хранилище: {used_mb:.1f} MB{limit}\n"
         f"DB file: {db_size_mb:.1f} MB\n"
         f"Messages: {db_info['total_messages']}\n"
-        f"Last message: {db_info['last_message_utc']}"
+        f"Last message: {local_time(db_info['last_message_utc'], settings.tz)}"
     )
     await update.message.reply_text(text)
 
